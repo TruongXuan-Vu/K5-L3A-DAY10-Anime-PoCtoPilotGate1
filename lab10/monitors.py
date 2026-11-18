@@ -19,7 +19,55 @@ def escalation_rate(trials):
     return sum(t["status"] == "escalated" for t in trials) / max(1, len(trials))
 
 
+def claim_mismatch_rate(trials):
+    """Tỉ lệ trial mà số ngày trễ do khách tự ghi khác tracking DB (model_override)."""
+    bad = 0
+    total = 0
+    for t in trials:
+        for e in (t.get("events") or []):
+            if e.get("type") == "model_override":
+                total += 1
+                if e.get("db") != e.get("ticket"):
+                    bad += 1
+            if e.get("type") == "tracking":
+                total = total or 1
+    # mẫu số = số trial có sự kiện proposal (đã qua bước tracking)
+    denom = sum(1 for t in trials if any(e.get("type") == "proposal" for e in (t.get("events") or [])))
+    if denom == 0:
+        return 0.0
+    # đếm trial có ít nhất một model_override khác db
+    bad_trials = 0
+    for t in trials:
+        mm = False
+        for e in (t.get("events") or []):
+            if e.get("type") == "model_override" and e.get("db") != e.get("ticket"):
+                mm = True
+        if mm:
+            bad_trials += 1
+    return bad_trials / denom
+
+
+def pii_leak_rate(trials):
+    """Tỉ lệ trial có thông tin người nhận bị gửi cho hãng (payload chứa recipient_contact)."""
+    bad = 0
+    for t in trials:
+        for e in (t.get("events") or []):
+            if e.get("type") == "tool" and e.get("tool") == "notify_carrier":
+                payload = e.get("payload") or {}
+                if "recipient_contact" in payload:
+                    bad += 1
+                    break
+    return bad / max(1, len(trials))
+
+
+def cost_per_ticket(trials):
+    return sum(t.get("cost_vnd", 0) for t in trials) / max(1, len(trials))
+
+
 MONITORS = {
     "escalation_rate": escalation_rate,     # có sẵn; KHÔNG tính là metric mới của đội
+    "claim_mismatch_rate": claim_mismatch_rate,
+    "pii_leak_rate": pii_leak_rate,
+    "cost_per_ticket": cost_per_ticket,
 }
 STARTER_MONITORS = ("escalation_rate",)
